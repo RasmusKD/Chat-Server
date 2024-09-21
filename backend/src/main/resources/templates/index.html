@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>TCP Echo Client</title>
+</head>
+<body>
+<h1>TCP Echo Server Client</h1>
+
+<input type="text" id="messageInput" placeholder="Skriv en besked">
+<button onclick="sendMessage()">Send</button>
+
+<div id="response"></div>
+
+<script type="text/javascript">
+    function sendMessage() {
+        var message = document.getElementById('messageInput').value;
+
+        fetch('/send', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({message: message})
+        })
+            .then(response => response.text())
+            .then(data => {
+                document.getElementById('response').innerText = data;
+            })
+            .catch(error => console.error('Error:', error));
+    }
+</script>
+
+</body>
+</html>
