@@ -1,28 +1,32 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { FiSettings, FiSave } from 'react-icons/fi';
-import { AiOutlineClose } from 'react-icons/ai';
+import PocketBase from 'pocketbase';
 import './App.css';
 import moment from 'moment';
 
+const pb = new PocketBase('http://127.0.0.1:8090'); // PocketBase server URL
+
 function App() {
-    const [displayName, setDisplayName] = useState<string | null>(null);
-    const [tempDisplayName, setTempDisplayName] = useState('');
+    const [clientId, setClientId] = useState<string | null>(null); // Store user ID (clientId)
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [isLoginForm, setIsLoginForm] = useState(true); // Toggle between login and register
+    const [isLoggedIn, setIsLoggedIn] = useState(false);
+    const [errorMessage, setErrorMessage] = useState<string | null>(null); // Error message for validation
     const [message, setMessage] = useState('');
-    const [messages, setMessages] = useState<{ name: string, content: string, timestamp: string }[]>([]);
-    const [connectionStatus, setConnectionStatus] = useState<string>(''); // Track connection messages
-    const [showSettings, setShowSettings] = useState(false);
-    const [nameSavedMessage, setNameSavedMessage] = useState<string | null>(null); // Name saved message
-    const [connected, setConnected] = useState<boolean>(false); // Track connected status
-    const [sendMessageError, setSendMessageError] = useState<string | null>(null); // Error for sending message
-    const [roomName, setRoomName] = useState('Room1'); // Room name for joining a chat room
-    const [roomChanged, setRoomChanged] = useState<boolean>(false); // Track manual room changes
+    const [messages, setMessages] = useState<{ clientId: string, roomName: string, timestamp: string, messageType: string, content: string }[]>([]);
+    const [connectionStatus, setConnectionStatus] = useState<string>('');
+    const [connected, setConnected] = useState<boolean>(false);
+    const [sendMessageError, setSendMessageError] = useState<string | null>(null);
+    const [roomName, setRoomName] = useState('Room1');
+    const [roomChanged, setRoomChanged] = useState<boolean>(false);
     const rooms = ['Room1', 'Room2', 'Room3', 'Room4', 'Room5']; // Default rooms
-    const wsRef = useRef<WebSocket | null>(null);
+    const wsRef = useRef<WebSocket | null>(null); // WebSocket reference
     const retryInterval = useRef<NodeJS.Timeout | null>(null);
-    const messagesContainerRef = useRef<HTMLDivElement | null>(null); // Ref for the messages container
+    const messagesContainerRef = useRef<HTMLDivElement | null>(null); // For scrolling
 
-    const retryDelay = 5000; // Delay in milliseconds between retry attempts
+    const retryDelay = 5000; // Retry WebSocket connection every 5 seconds
 
+    // WebSocket connection handler
     const connectWebSocket = useCallback(() => {
         const attemptReconnect = () => {
             retryInterval.current = setTimeout(() => {
@@ -30,59 +34,64 @@ function App() {
             }, retryDelay);
         };
 
+        // If the WebSocket is already open or connecting, skip reconnection
         if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
-            return; // Don't reconnect if it's already open or connecting
+            return;
         }
 
         setConnectionStatus('Connecting to WebSocket...');
-        const ws = new WebSocket('ws://localhost:8080/chat');
+        const ws = new WebSocket('ws://localhost:8080/chat'); // WebSocket server URL
         wsRef.current = ws;
 
         ws.onopen = () => {
             setConnectionStatus('Connected');
             setConnected(true);
 
-            // Send the room join message once connected
-            ws.send(`JOIN|${roomName}|${displayName}`);
-
-            // Only clear messages if the room was manually changed
-            if (roomChanged) {
-                setMessages([]); // Clear previous messages when joining a new room manually
-                setRoomChanged(false); // Reset the room changed flag after clearing messages
+            // When connected, send a join message with the roomName and clientId
+            if (clientId) {
+                ws.send(`JOIN|${roomName}|${clientId}`);
             }
 
+            // Clear messages if the user manually changed rooms
+            if (roomChanged) {
+                setMessages([]);
+                setRoomChanged(false);
+            }
+
+            // Clear retry interval if successfully connected
             if (retryInterval.current) {
-                clearTimeout(retryInterval.current); // Clear retry interval if connected
+                clearTimeout(retryInterval.current);
                 retryInterval.current = null;
             }
 
-            // Remove the "Connected" message after 5 seconds
             setTimeout(() => {
                 setConnectionStatus('');
-            }, 5000);
+            }, 5000); // Clear connection message after 5 seconds
         };
 
         ws.onmessage = (event) => {
-            const data = event.data.split('|');
-            const [userName, content] = data;  // The server sends "userName|message"
-            const timestamp = new Date().toISOString();
-            setMessages((prevMessages) => [...prevMessages, { name: userName, content, timestamp }]);
+            const data = event.data.split('|'); // Parse message by splitting on '|'
+            if (data.length >= 5) {
+                const [clientId, roomName, timestamp, messageType, content] = data;
+                setMessages((prevMessages) => [...prevMessages, { clientId, roomName, timestamp, messageType, content }]);
+            }
         };
 
         ws.onerror = () => {
             setConnectionStatus('WebSocket error occurred');
-            ws.close(); // Ensure the WebSocket closes to allow retries
+            ws.close(); // Ensure the WebSocket closes on error
         };
 
         ws.onclose = () => {
             setConnectionStatus('WebSocket connection closed. Retrying in a few seconds...');
             setConnected(false); // Update the connection indicator
-            attemptReconnect(); // Call the retry function
+            attemptReconnect(); // Retry connection
         };
-    }, [roomName, displayName, roomChanged]);
+    }, [roomName, clientId, roomChanged]);
 
+    // Connect WebSocket on component mount
     useEffect(() => {
-        connectWebSocket(); // Connect on mount
+        connectWebSocket();
 
         return () => {
             if (wsRef.current) {
@@ -94,7 +103,7 @@ function App() {
         };
     }, [connectWebSocket]);
 
-    // Scroll to the bottom of the messages
+    // Scroll to the bottom of the chat when messages are updated
     const scrollToBottom = useCallback(() => {
         if (messagesContainerRef.current) {
             messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
@@ -105,58 +114,104 @@ function App() {
         scrollToBottom(); // Scroll whenever messages change
     }, [messages, scrollToBottom]);
 
+    // Function to send a message according to the protocol
     const sendMessage = () => {
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && message.trim() && displayName) {
-            const formattedMessage = `MESSAGE|${roomName}|${message}`;  // Send message in "MESSAGE|roomName|message" format
-            wsRef.current.send(formattedMessage);
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && message.trim() && clientId) {
+            const timestamp = moment().format('YYYY-MM-DD HH:mm:ss'); // Format timestamp
+            // Send message in the format: MESSAGE|roomName|clientId|timestamp|messageType|content
+            const formattedMessage = `MESSAGE|${roomName}|${clientId}|${timestamp}|TEXT|${message}`;
+            wsRef.current.send(formattedMessage); // Send message via WebSocket
             setMessage(''); // Clear the input after sending
-            setSendMessageError(null); // Clear any previous error after successful sending
+            setSendMessageError(null);
         } else {
             setSendMessageError('WebSocket is not open. Cannot send the message.');
             setTimeout(() => {
-                setSendMessageError(null); // Automatically remove error after 5 seconds
+                setSendMessageError(null); // Clear error message after 5 seconds
             }, 5000);
         }
     };
 
-    const toggleSettings = () => {
-        if (tempDisplayName.trim()) {
-            setDisplayName(tempDisplayName);
-            setNameSavedMessage('Display name saved!'); // Show saved message
-            setTimeout(() => setNameSavedMessage(null), 3000); // Hide message after 3 seconds
-        }
-        setShowSettings(!showSettings);
-    };
-
-    const handleDisplayNameSubmit = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        if (e.key === 'Enter' && tempDisplayName.trim()) {
-            setDisplayName(tempDisplayName);
-            setNameSavedMessage('Display name saved!'); // Show saved message
-            setTimeout(() => setNameSavedMessage(null), 3000); // Hide message after 3 seconds
-            setShowSettings(false);
-        }
-    };
-
+    // Function to handle room change
     const handleJoinRoom = (room: string) => {
         setRoomName(room);
-        setRoomChanged(true);  // Mark that the room was manually changed
-        connectWebSocket(); // Join the selected room
+        setRoomChanged(true); // Mark that the room was manually changed
+        connectWebSocket(); // Reconnect WebSocket
     };
 
-    if (!displayName) {
+    // Register user in PocketBase
+    const registerUser = async () => {
+        if (password.length < 8) {
+            setErrorMessage('Password must be at least 8 characters long');
+            return;
+        }
+
+        try {
+            const user = await pb.collection('users').create({
+                email,
+                password,
+                passwordConfirm: password,
+            });
+            setClientId(user.id); // Store client ID
+            setIsLoggedIn(true);
+        } catch (error) {
+            console.error('Registration error:', error);
+            setErrorMessage('Registration failed');
+        }
+    };
+
+    // Login user in PocketBase
+    const loginUser = async () => {
+        if (password.length < 8) {
+            setErrorMessage('Password must be at least 8 characters long');
+            return;
+        }
+
+        try {
+            const authData = await pb.collection('users').authWithPassword(email, password);
+            setClientId(authData.record.id); // Store client ID
+            setIsLoggedIn(true);
+        } catch (error) {
+            console.error('Login error:', error);
+            setErrorMessage('Login failed');
+        }
+    };
+
+    // Toggle between login and register form
+    const toggleForm = () => {
+        setIsLoginForm(!isLoginForm);
+        setErrorMessage(null); // Clear error message when toggling
+    };
+
+    if (!isLoggedIn) {
         return (
             <div className="App">
                 <div className="flex items-center justify-center min-h-screen bg-black">
                     <div className="w-96 bg-black border border-green-500 rounded-lg shadow-lg p-4">
-                        <h1 className="text-green-500 text-center font-bold mb-4">Enter Display Name</h1>
+                        <h1 className="text-green-500 text-center font-bold mb-4">{isLoginForm ? 'Login' : 'Register'}</h1>
                         <input
                             type="text"
-                            value={tempDisplayName}
-                            onChange={(e) => setTempDisplayName(e.target.value)}
-                            onKeyDown={handleDisplayNameSubmit}
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
                             className="w-full bg-black text-green-500 font-mono p-2 rounded-md focus:outline-none placeholder-green-500"
-                            placeholder="Enter your display name..."
+                            placeholder="Enter email..."
                         />
+                        <input
+                            type="password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            className="w-full bg-black text-green-500 font-mono p-2 rounded-md focus:outline-none placeholder-green-500 mt-2"
+                            placeholder="Enter password..."
+                        />
+                        <button
+                            onClick={isLoginForm ? loginUser : registerUser}
+                            className="w-full bg-green-500 text-black p-2 rounded-md mt-4"
+                        >
+                            {isLoginForm ? 'Login' : 'Register'}
+                        </button>
+                        <button onClick={toggleForm} className="w-full text-green-500 mt-2">
+                            {isLoginForm ? 'Need to register?' : 'Already have an account?'}
+                        </button>
+                        {errorMessage && <div className="text-red-500 mt-2">{errorMessage}</div>}
                     </div>
                 </div>
             </div>
@@ -177,39 +232,7 @@ function App() {
                                     title={connected ? 'Online' : 'Offline'}
                                 ></span>
                             </div>
-                            <FiSettings onClick={toggleSettings} className="text-green-500 cursor-pointer" />
                         </div>
-
-                        {showSettings && (
-                            <div className="absolute top-0 left-0 w-full h-full bg-black bg-opacity-90 flex flex-col z-10">
-                                <div className="bg-black text-green-500 text-center py-1 font-bold border-b border-green-500 flex justify-between items-center px-2">
-                                    <span>Settings</span>
-                                    <AiOutlineClose onClick={toggleSettings} className="text-green-500 cursor-pointer" />
-                                </div>
-
-                                <div className="flex-1 flex flex-col items-center p-4">
-                                    <div className="w-full flex justify-start items-center">
-                                        <span className="text-green-500">Display Name:</span>
-                                    </div>
-                                    <input
-                                        type="text"
-                                        value={tempDisplayName}
-                                        onChange={(e) => setTempDisplayName(e.target.value)}
-                                        onKeyDown={handleDisplayNameSubmit}
-                                        className="w-full bg-black text-green-500 font-mono p-2 border border-green-500 rounded-md focus:outline-none placeholder-green-500 mt-2"
-                                        placeholder="Update display name..."
-                                    />
-                                    <div className="flex items-center justify-center mt-2">
-                                        <FiSave className="text-green-500 cursor-pointer" onClick={toggleSettings} />
-                                    </div>
-                                    {nameSavedMessage && (
-                                        <div className="text-green-500 mt-2">
-                                            {nameSavedMessage}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
 
                         {connectionStatus && (
                             <div className={`text-center p-4 ${connected ? 'text-green-500' : 'text-red-500'}`}>
@@ -229,8 +252,9 @@ function App() {
                         >
                             {messages.map((msg, index) => (
                                 <div key={index} className="flex flex-col text-left">
-                                    <span className="text-green-300">{moment(msg.timestamp).format('DD-MM-YYYY HH:mm')}</span>
-                                    <span><strong>{msg.name}:</strong> {msg.content}</span>
+                                    <span className="text-green-300">{moment(msg.timestamp).format('YYYY-MM-DD HH:mm:ss')}</span>
+                                    {/* Display message without room name */}
+                                    <span><strong>{msg.clientId}:</strong> {msg.content}</span>
                                 </div>
                             ))}
                         </div>
