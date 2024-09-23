@@ -14,6 +14,7 @@ function App() {
     const [nameSavedMessage, setNameSavedMessage] = useState<string | null>(null); // Name saved message
     const [connected, setConnected] = useState<boolean>(false); // Track connected status
     const [sendMessageError, setSendMessageError] = useState<string | null>(null); // Error for sending message
+    const [roomName, setRoomName] = useState('DefaultRoom'); // Room name for joining a chat room
     const wsRef = useRef<WebSocket | null>(null);
     const retryInterval = useRef<NodeJS.Timeout | null>(null);
     const messagesContainerRef = useRef<HTMLDivElement | null>(null); // Ref for the messages container
@@ -39,6 +40,12 @@ function App() {
             setConnectionStatus('Connected');
             setConnected(true);
 
+            // Send the room join message once connected
+            ws.send(`JOIN|${roomName}|${displayName}`);  // Send display name with room join
+
+            // Clear the message log when joining a new room
+            setMessages([]);  // Clear previous messages when joining a new room
+
             if (retryInterval.current) {
                 clearTimeout(retryInterval.current); // Clear retry interval if connected
                 retryInterval.current = null;
@@ -52,8 +59,9 @@ function App() {
 
         ws.onmessage = (event) => {
             const data = event.data.split('|');
-            const [name, timestamp, , content] = data;
-            setMessages((prevMessages) => [...prevMessages, { name, content, timestamp }]);
+            const [userName, content] = data;  // The server sends "userName|message"
+            const timestamp = new Date().toISOString();
+            setMessages((prevMessages) => [...prevMessages, { name: userName, content, timestamp }]);
         };
 
         ws.onerror = () => {
@@ -66,7 +74,7 @@ function App() {
             setConnected(false); // Update the connection indicator
             attemptReconnect(); // Call the retry function
         };
-    }, []);
+    }, [roomName, displayName]);
 
     useEffect(() => {
         connectWebSocket(); // Connect on mount
@@ -94,8 +102,7 @@ function App() {
 
     const sendMessage = () => {
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && message.trim() && displayName) {
-            const timestamp = new Date().toISOString();
-            const formattedMessage = `${displayName}|${timestamp}|TEXT|${message}`;
+            const formattedMessage = `MESSAGE|${roomName}|${message}`;  // Send message in "MESSAGE|roomName|message" format
             wsRef.current.send(formattedMessage);
             setMessage(''); // Clear the input after sending
             setSendMessageError(null); // Clear any previous error after successful sending
@@ -193,14 +200,23 @@ function App() {
                         </div>
                     )}
 
-                    {/* If there's a connection error or status, show the latest status */}
+                    <div className="flex flex-col p-2 border-b border-green-500">
+                        <input
+                            type="text"
+                            value={roomName}
+                            onChange={(e) => setRoomName(e.target.value)}
+                            className="w-full bg-black text-green-500 font-mono p-2 rounded-md focus:outline-none placeholder-green-500"
+                            placeholder="Enter room name..."
+                        />
+                        <button className="text-green-500 mt-2" onClick={connectWebSocket}>Join Room</button>
+                    </div>
+
                     {connectionStatus && (
                         <div className={`text-center p-4 ${connected ? 'text-green-500' : 'text-red-500'}`}>
                             {connectionStatus}
                         </div>
                     )}
 
-                    {/* Show message send error if there is any */}
                     {sendMessageError && (
                         <div className="text-red-500 text-center p-2">
                             {sendMessageError}
