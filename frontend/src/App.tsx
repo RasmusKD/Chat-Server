@@ -13,7 +13,7 @@ function App() {
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null); // Error message for validation
     const [message, setMessage] = useState('');
-    const [messages, setMessages] = useState<{ clientId: string, roomName: string, timestamp: string, messageType: string, content: string }[]>([]);
+    const [messages, setMessages] = useState<{ clientId: string, timestamp: string, messageType: string, content: string }[]>([]);
     const [connectionStatus, setConnectionStatus] = useState<string>('');
     const [connected, setConnected] = useState<boolean>(false);
     const [sendMessageError, setSendMessageError] = useState<string | null>(null);
@@ -71,9 +71,9 @@ function App() {
 
         ws.onmessage = (event) => {
             const data = event.data.split('|'); // Parse message by splitting on '|'
-            if (data.length >= 5) {
-                const [clientId, roomName, timestamp, messageType, content] = data;
-                setMessages((prevMessages) => [...prevMessages, { clientId, roomName, timestamp, messageType, content }]);
+            if (data.length === 4) { // Match the format: clientId|timestamp|messageType|content
+                const [clientId, timestamp, messageType, content] = data;
+                setMessages((prevMessages) => [...prevMessages, { clientId, timestamp, messageType, content }]);
             }
         };
 
@@ -114,29 +114,45 @@ function App() {
         scrollToBottom(); // Scroll whenever messages change
     }, [messages, scrollToBottom]);
 
-    // Function to send a message according to the protocol
-    const sendMessage = () => {
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && message.trim() && clientId) {
-            const timestamp = moment().format('YYYY-MM-DD HH:mm:ss'); // Format timestamp
-            // Send message in the format: MESSAGE|roomName|clientId|timestamp|messageType|content
-            const formattedMessage = `MESSAGE|${roomName}|${clientId}|${timestamp}|TEXT|${message}`;
-            wsRef.current.send(formattedMessage); // Send message via WebSocket
-            setMessage(''); // Clear the input after sending
-            setSendMessageError(null);
-        } else {
-            setSendMessageError('WebSocket is not open. Cannot send the message.');
-            setTimeout(() => {
-                setSendMessageError(null); // Clear error message after 5 seconds
-            }, 5000);
-        }
+    // Function to detect if a string contains an emoji
+    const containsEmoji = (message: string) => {
+        const emojiRegex = /(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)/gu;
+        return emojiRegex.test(message);
     };
 
-    // Function to handle room change
+    // Function to send a message according to the protocol
+    const sendMessage = () => {
+        // First, check if the message is empty and just clear the input if it is
+        if (!message.trim()) {
+            setMessage('');  // Clear the input even if the message is empty
+            return;
+        }
+
+        // Check if WebSocket is open and client ID is valid
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && clientId) {
+            const timestamp = moment().format('YYYY-MM-DD HH:mm:ss');  // Format timestamp
+            const messageType = containsEmoji(message) ? 'EMOJI' : 'TEXT';
+
+            const formattedMessage = `${clientId}|${timestamp}|${messageType}|${message}`;
+            wsRef.current.send(formattedMessage);  // Send message via WebSocket
+        }
+
+        setMessage('');  // Always clear the input after sending or skipping
+    };
+
+    // Function to join a room (room is a string)
     const handleJoinRoom = (room: string) => {
         setRoomName(room);
         setRoomChanged(true); // Mark that the room was manually changed
-        connectWebSocket(); // Reconnect WebSocket
+
+        if (clientId && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(`JOIN|${room}|${clientId}`);
+            // Clear messages once the room change is complete
+            setMessages([]);
+        }
     };
+
+
 
     // Register user in PocketBase
     const registerUser = async () => {
@@ -253,7 +269,6 @@ function App() {
                             {messages.map((msg, index) => (
                                 <div key={index} className="flex flex-col text-left">
                                     <span className="text-green-300">{moment(msg.timestamp).format('YYYY-MM-DD HH:mm:ss')}</span>
-                                    {/* Display message without room name */}
                                     <span><strong>{msg.clientId}:</strong> {msg.content}</span>
                                 </div>
                             ))}
