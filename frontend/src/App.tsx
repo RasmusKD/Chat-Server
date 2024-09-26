@@ -23,6 +23,10 @@ function App() {
     const wsRef = useRef<WebSocket | null>(null); // WebSocket reference
     const retryInterval = useRef<NodeJS.Timeout | null>(null);
     const messagesContainerRef = useRef<HTMLDivElement | null>(null); // For scrolling
+    const [directMessages, setDirectMessages] = useState<{ senderId: string; content: string; timestamp: string }[]>([]);
+    const [selectedUser, setSelectedUser] = useState<string | null>(null);
+    const [dmMessage, setDmMessage] = useState('');
+    const [isDmOpen, setIsDmOpen] = useState(false);
 
     const retryDelay = 5000; // Retry WebSocket connection every 5 seconds
 
