@@ -12,7 +12,6 @@ import java.util.Map;
 public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     // Static rooms and their associated sessions
-    private static final String[] STATIC_ROOMS = {"Room1", "Room2", "Room3", "Room4", "Room5"};
     private Map<String, List<WebSocketSession>> chatRooms = new HashMap<>();
     private Map<WebSocketSession, String> sessionUserMap = new HashMap<>();
 
