@@ -103,7 +103,6 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-
     // Helper to find a session by clientId
     private WebSocketSession findSessionByClientId(String clientId) {
         for (Map.Entry<WebSocketSession, String> entry : sessionUserMap.entrySet()) {
