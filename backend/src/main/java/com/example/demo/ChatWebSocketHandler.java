@@ -42,7 +42,13 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
-        // Handle regular messages
+        // Handle unicast messages using /msg
+        if (messageParts[3].startsWith("/msg")) {
+            handleUnicastMessage(session, messageParts, message);
+            return;
+        }
+
+        // Handle regular messages (broadcast)
         if (messageParts.length < 4) {
             System.out.println("Invalid message format: " + message.getPayload());
             return;
@@ -54,9 +60,6 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         String messageType = messageParts[2];
         String content = messageParts[3];
 
-        // Log message details
-        System.out.println("Message details - Client ID: " + clientId + ", Timestamp: " + timestamp + ", Type: " + messageType + ", Content: " + content);
-
         // Get the room the session is part of
         String roomName = (String) session.getAttributes().get("room");
         if (roomName != null) {
@@ -65,6 +68,51 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         } else {
             System.out.println("Session is not in any room, cannot send message");
         }
+    }
+
+    // Handle unicast messages (/msg clientId message)
+    private void handleUnicastMessage(WebSocketSession senderSession, String[] messageParts, TextMessage message) throws Exception {
+        String senderId = sessionUserMap.get(senderSession);
+        String timestamp = messageParts[1];
+        String content = messageParts[3];
+
+        // Parse the /msg command to get the target client ID and message
+        String[] msgCommandParts = content.split(" ", 3);  // "/msg clientId message"
+        if (msgCommandParts.length < 3 || !msgCommandParts[0].equals("/msg")) {
+            System.out.println("Invalid /msg format: " + content);
+            return;
+        }
+
+        String targetClientId = msgCommandParts[1]; // Extract the recipient's client ID
+        String msgContent = msgCommandParts[2];    // Extract the actual message content
+
+        // Find the target user's WebSocket session
+        WebSocketSession targetSession = findSessionByClientId(targetClientId);
+        if (targetSession != null) {
+            // Send the message to the sender as "To targetClientId: message"
+            String senderMessage = "To " + targetClientId + ": " + msgContent;
+            TextMessage senderFormattedMessage = new TextMessage(senderId + "|" + timestamp + "|unicast|" + senderMessage);
+            senderSession.sendMessage(senderFormattedMessage);
+
+            // Send the message to the recipient as "From senderId: message"
+            String recipientMessage = "From " + senderId + ": " + msgContent;
+            TextMessage recipientFormattedMessage = new TextMessage(senderId + "|" + timestamp + "|unicast|" + recipientMessage);
+            targetSession.sendMessage(recipientFormattedMessage);
+        } else {
+            System.out.println("Target user " + targetClientId + " not found.");
+            senderSession.sendMessage(new TextMessage("System|" + timestamp + "|error|Target user not found."));
+        }
+    }
+
+
+    // Helper to find a session by clientId
+    private WebSocketSession findSessionByClientId(String clientId) {
+        for (Map.Entry<WebSocketSession, String> entry : sessionUserMap.entrySet()) {
+            if (entry.getValue().equals(clientId)) {
+                return entry.getKey();
+            }
+        }
+        return null;
     }
 
     public void joinRoom(WebSocketSession session, String roomName, String clientId) {
